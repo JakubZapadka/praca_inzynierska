@@ -1,0 +1,109 @@
+@import "tailwindcss";
+@import "@fontsource/gloock/latin-ext.css";
+@import "@fontsource/gloock/latin.css";
+@import "@fontsource-variable/schibsted-grotesk/index.css";
+
+/*
+ * Paleta pracowni ramiarskiej:
+ * ściana z szałwiowego tynku, biały passe-partout, drewno ram,
+ * kobaltowy akcent tylko dla działań klienta.
+ */
+@theme {
+  --color-wall: #dce1da;
+  --color-wall-deep: #c9d0c6;
+  --color-mat: #ffffff;
+  --color-ink: #24302a;
+  --color-ink-soft: #5b665f;
+  --color-oak: #b98a5a;
+  --color-cobalt: #2c45c4;
+  --color-cobalt-deep: #1f33a0;
+  --color-alert: #a8321e;
+
+  --font-display: "Gloock", Georgia, serif;
+  --font-sans: "Schibsted Grotesk Variable", system-ui, sans-serif;
+}
+
+html {
+  background: var(--color-wall);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Rama z obrazem: drewno (border), passe-partout (padding), cień rzucany na ścianę. */
+.frame {
+  --frame-color: #22201d;
+  --frame-width: 12px;
+  --mat: 7%;
+  background: var(--color-mat);
+  border: var(--frame-width) solid var(--frame-color);
+  padding: var(--mat);
+  box-shadow:
+    inset 0 0 0 1px rgb(0 0 0 / 0.06),
+    0 1px 1px rgb(36 48 42 / 0.12),
+    0 14px 22px -10px rgb(36 48 42 / 0.45),
+    0 30px 50px -28px rgb(36 48 42 / 0.4);
+  transition: transform 220ms ease, box-shadow 220ms ease, border-color 220ms ease;
+}
+.frame[data-kind="canvas"] {
+  --mat: 0px;
+  border-width: 0;
+  box-shadow:
+    6px 0 0 -1px rgb(0 0 0 / 0.18),
+    0 16px 28px -12px rgb(36 48 42 / 0.5);
+}
+.frame[data-kind="poster"] {
+  --mat: 0px;
+  border-width: 0;
+  box-shadow: 0 10px 18px -12px rgb(36 48 42 / 0.45);
+}
+
+.frame-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  box-shadow: inset 0 2px 4px rgb(0 0 0 / 0.15);
+}
+
+@keyframes develop {
+  from {
+    opacity: 0;
+    filter: saturate(0) brightness(1.4);
+  }
+  to {
+    opacity: 1;
+    filter: none;
+  }
+}
+.develop {
+  animation: develop 900ms ease-out both;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.breathe {
+  animation: breathe 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .develop,
+  .breathe {
+    animation: none;
+  }
+  .frame {
+    transition: none;
+  }
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-cobalt);
+  outline-offset: 3px;
+}
