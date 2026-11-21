@@ -73,6 +73,8 @@ export function Creator() {
   const [rights, setRights] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  /** Chwila kliknięcia „Namaluj” – od niej liczy licznik czasu, także w trakcie wysyłania zdjęcia. */
+  const [startedAt, setStartedAt] = useState(0);
   const [dragOver, setDragOver] = useState(false);
 
   const [generation, setGeneration] = useState<GenerationView | null>(null);
@@ -81,6 +83,7 @@ export function Creator() {
   const [notice, setNotice] = useState<string | null>(null);
   const configuratorRef = useRef<HTMLDivElement>(null);
   const wallRef = useRef<HTMLElement>(null);
+  const errorRef = useRef<HTMLParagraphElement>(null);
 
   // Zwolnij pamięć podglądu zdjęcia przy zmianie lub wyjściu ze strony
   useEffect(() => () => {
@@ -145,13 +148,14 @@ export function Creator() {
   const isRunning = status === "running";
   const doneCount = generation?.variants.filter((v) => v.status === "done").length ?? 0;
 
-  // Zegar do licznika czasu na ścianie – tyka tylko podczas malowania.
+  // Zegar do licznika czasu na ścianie – tyka od kliknięcia „Namaluj” do końca malowania.
+  const busy = submitting || isRunning;
   const [now, setNow] = useState(0);
   useEffect(() => {
-    if (!isRunning) return;
+    if (!busy) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [isRunning]);
+  }, [busy]);
 
   // Postęp w tytule karty – widać go, nawet gdy klient przełączy się na inną kartę.
   useEffect(() => {
@@ -212,7 +216,11 @@ export function Creator() {
     form.set("orientation", orientation);
     form.set("rights", "on");
 
+    const started = Date.now();
     setSubmitting(true);
+    setStartedAt(started);
+    // Informacja o malowaniu pojawia się od razu – przewiń do niej, zanim zdjęcie się wyśle.
+    requestAnimationFrame(() => scrollToElement(wallRef.current));
     try {
       const res = await fetch("/api/generations", { method: "POST", body: form });
       const json = await res.json();
@@ -223,7 +231,7 @@ export function Creator() {
         id: json.id,
         status: "running",
         aspectRatio: ORIENTATIONS[orientation].aspect,
-        createdAt: Date.now(),
+        createdAt: started,
         error: null,
         variants: EMPTY_SLOTS.map((position) => ({
           id: `pending-${position}`,
@@ -236,13 +244,10 @@ export function Creator() {
         localStorage.setItem(STORAGE_KEY, json.id);
       } catch {}
       writeHistory([json.id, ...readHistory()]);
-      // Na telefonie ściana jest pod formularzem – pokaż ją, żeby było widać postęp.
-      const wall = wallRef.current;
-      if (wall && wall.getBoundingClientRect().top > window.innerHeight * 0.6) {
-        wall.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Nie udało się rozpocząć generowania.");
+      // Komunikat jest przy formularzu – wróć do niego z ekranu ściany.
+      requestAnimationFrame(() => scrollToElement(errorRef.current, "center"));
     } finally {
       setSubmitting(false);
     }
@@ -250,9 +255,7 @@ export function Creator() {
 
   function choose(variant: VariantView) {
     setSelected(variant);
-    requestAnimationFrame(() =>
-      configuratorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
-    );
+    requestAnimationFrame(() => scrollToElement(configuratorRef.current));
   }
 
   function startOver() {
@@ -286,8 +289,12 @@ export function Creator() {
   const earlier = history
     .filter((g) => g.id !== generation?.id)
     .flatMap((g) => g.variants.filter((v) => v.status === "done" && v.previewUrl).map((v) => ({ g, v })));
-  const aspect = cssAspect(generation?.aspectRatio ?? ORIENTATIONS[orientation].aspect);
-  const elapsed = running && now && generation ? Math.max(0, Math.floor((now - generation.createdAt) / 1000)) : 0;
+  // W trakcie wysyłania ściana pokazuje już nowe, puste ramy w wybranej orientacji.
+  const aspect = cssAspect(
+    submitting || !generation ? ORIENTATIONS[orientation].aspect : generation.aspectRatio,
+  );
+  const since = running && generation ? generation.createdAt : startedAt;
+  const elapsed = busy && now ? Math.max(0, Math.floor((now - since) / 1000)) : 0;
 
   if (selected && generation) {
     return (
@@ -460,7 +467,7 @@ export function Creator() {
         </fieldset>
 
         {error ? (
-          <p role="alert" className="border-l-4 border-alert bg-mat px-3 py-2 text-sm text-alert">
+          <p ref={errorRef} role="alert" className="scroll-mt-6 border-l-4 border-alert bg-mat px-3 py-2 text-sm text-alert">
             {error}
           </p>
         ) : null}
@@ -490,11 +497,18 @@ export function Creator() {
 
       {/* Ściana z propozycjami */}
       <section ref={wallRef} aria-label="Propozycje obrazów" className="min-w-0 scroll-mt-4">
-        {running ? <GenerationProgress done={doneCount} total={SITE.variantCount} elapsed={elapsed} /> : null}
+        {busy ? (
+          <GenerationProgress
+            uploading={submitting}
+            done={running ? doneCount : 0}
+            total={SITE.variantCount}
+            elapsed={elapsed}
+          />
+        ) : null}
         <div className="grid grid-cols-2 gap-x-[6%] gap-y-10 px-[4%] py-4 sm:gap-y-12">
           {EMPTY_SLOTS.map((slot) => {
-            const variant = generation?.variants.find((v) => v.position === slot);
-            const slotStatus = variant?.status ?? "empty";
+            const variant = submitting ? undefined : generation?.variants.find((v) => v.position === slot);
+            const slotStatus = submitting ? "pending" : (variant?.status ?? "empty");
             if (variant && slotStatus === "done" && variant.previewUrl) {
               return (
                 <button
@@ -525,7 +539,7 @@ export function Creator() {
                 >
                   {slotStatus === "pending" ? (
                     <p className="absolute inset-0 grid place-items-center p-3 text-center text-sm font-semibold text-ink-soft">
-                      Maluję…
+                      {submitting ? "Przygotowuję…" : "Maluję…"}
                     </p>
                   ) : null}
                   {slotStatus === "failed" ? (
@@ -540,10 +554,16 @@ export function Creator() {
           })}
         </div>
         <p className="mt-2 px-[4%] text-sm text-ink-soft" aria-live="polite">
-          {!generation && "Tu zawisną dwie propozycje. Wybierzesz jedną, a my ją wydrukujemy."}
-          {running && `Gotowe: ${doneCount} z ${SITE.variantCount}`}
-          {generation?.status === "done" && "Kliknij obraz, który chcesz powiesić u siebie."}
-          {generation?.status === "failed" && (generation.error ?? "Nie udało się. Spróbuj ponownie.")}
+          {submitting ? (
+            "Wysyłam zdjęcie…"
+          ) : (
+            <>
+              {!generation && "Tu zawisną dwie propozycje. Wybierzesz jedną, a my ją wydrukujemy."}
+              {running && `Gotowe: ${doneCount} z ${SITE.variantCount}`}
+              {generation?.status === "done" && "Kliknij obraz, który chcesz powiesić u siebie."}
+              {generation?.status === "failed" && (generation.error ?? "Nie udało się. Spróbuj ponownie.")}
+            </>
+          )}
         </p>
 
         {earlier.length ? (
@@ -557,7 +577,7 @@ export function Creator() {
                 <li key={v.id}>
                   <button
                     type="button"
-                    disabled={running}
+                    disabled={busy}
                     onClick={() => chooseEarlier(g, v)}
                     aria-label="Zamów ten wcześniejszy obraz"
                     className="block w-20 border-4 border-mat bg-mat p-0.5 transition-transform hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0"
@@ -583,19 +603,73 @@ export function Creator() {
   );
 }
 
+/**
+ * Spokojnie przewija do elementu (wbudowane "smooth" jest za szybkie i nie da się go zwolnić).
+ * Bez animacji, gdy klient wyłączył ruch w systemie; przerywa się, gdy klient sam zacznie przewijać.
+ */
+function scrollToElement(element: Element | null, block: "start" | "center" = "start") {
+  if (!element) return;
+  const rect = element.getBoundingClientRect();
+  const margin = parseFloat(getComputedStyle(element).scrollMarginTop) || 0;
+  const offset = block === "center" ? rect.top - (window.innerHeight - rect.height) / 2 : rect.top - margin;
+  const maxY = document.documentElement.scrollHeight - window.innerHeight;
+  const from = window.scrollY;
+  const to = Math.min(Math.max(0, from + offset), maxY);
+  const distance = to - from;
+  if (Math.abs(distance) < 2) return;
+
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    window.scrollTo(0, to);
+    return;
+  }
+
+  // Dłuższa droga = trochę dłużej, ale zawsze między 0,8 a 1,6 s.
+  const duration = Math.min(1600, 800 + Math.abs(distance) * 0.5);
+  const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
+  let frame = 0;
+  const stop = () => {
+    cancelAnimationFrame(frame);
+    window.removeEventListener("wheel", stop);
+    window.removeEventListener("touchstart", stop);
+    window.removeEventListener("keydown", stop);
+  };
+  window.addEventListener("wheel", stop, { passive: true });
+  window.addEventListener("touchstart", stop, { passive: true });
+  window.addEventListener("keydown", stop);
+
+  const start = performance.now();
+  const step = (time: number) => {
+    const progress = Math.min((time - start) / duration, 1);
+    window.scrollTo(0, from + distance * easeInOut(progress));
+    if (progress < 1) frame = requestAnimationFrame(step);
+    else stop();
+  };
+  frame = requestAnimationFrame(step);
+}
+
 function formatElapsed(seconds: number) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
 /** Pasek nad ścianą: co się teraz dzieje, ile to już trwa i że wszystko jest w porządku. */
-function GenerationProgress({ done, total, elapsed }: { done: number; total: number; elapsed: number }) {
+function GenerationProgress({
+  uploading,
+  done,
+  total,
+  elapsed,
+}: {
+  uploading: boolean;
+  done: number;
+  total: number;
+  elapsed: number;
+}) {
   const slow = elapsed > EXPECTED_SECONDS;
   // Szacunek z upływu czasu (najwyżej 90%), a każdy gotowy obraz dopełnia swoją część paska.
   const inFlight = Math.min(elapsed / EXPECTED_SECONDS, 0.9);
-  const percent = Math.round(((done + (total - done) * inFlight) / total) * 100);
+  const percent = Math.max(3, Math.round(((done + (total - done) * inFlight) / total) * 100));
 
   return (
-    <div className="mx-[4%] mb-4 bg-mat px-4 py-4 sm:px-5">
+    <div className="rise mx-[4%] mb-4 bg-mat px-4 py-4 sm:px-5">
       <div className="flex items-baseline justify-between gap-3">
         <p className="font-display text-xl">AI maluje Twoje obrazy</p>
         <p className="text-sm text-ink-soft" aria-label={`Trwa ${formatElapsed(elapsed)}`}>
@@ -613,10 +687,19 @@ function GenerationProgress({ done, total, elapsed }: { done: number; total: num
         <div className="h-full bg-oak transition-[width] duration-1000 ease-linear" style={{ width: `${percent}%` }} />
       </div>
       <ol className="mt-4 grid gap-1.5 text-sm">
-        <ProgressStep state="done">Zdjęcie przesłane</ProgressStep>
-        <ProgressStep state="active">
-          Malowanie propozycji – gotowe {done} z {total}
-        </ProgressStep>
+        {uploading ? (
+          <>
+            <ProgressStep state="active">Wysyłam zdjęcie…</ProgressStep>
+            <ProgressStep state="todo">Malowanie propozycji</ProgressStep>
+          </>
+        ) : (
+          <>
+            <ProgressStep state="done">Zdjęcie przesłane</ProgressStep>
+            <ProgressStep state="active">
+              Malowanie propozycji – gotowe {done} z {total}
+            </ProgressStep>
+          </>
+        )}
         <ProgressStep state="todo">Wybierasz obraz, ramę i rozmiar</ProgressStep>
       </ol>
       <p className="mt-4 text-sm text-ink-soft">

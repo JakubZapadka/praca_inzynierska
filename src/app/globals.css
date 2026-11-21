@@ -93,9 +93,25 @@ html {
   animation: breathe 1.8s ease-in-out infinite;
 }
 
+/* Wejście okienka postępu po kliknięciu „Namaluj”. */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.rise {
+  animation: rise 700ms ease-out both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .develop,
-  .breathe {
+  .breathe,
+  .rise {
     animation: none;
   }
   .frame {
